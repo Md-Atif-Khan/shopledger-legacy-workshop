@@ -2,83 +2,78 @@ var test = require('node:test');
 var assert = require('node:assert/strict');
 var invoice = require('../lib/invoice');
 var pricing = require('../lib/pricing');
-var reports = require('../lib/reports');
 
-function order(id, items, coupon, ledgerFigures) {
-  return Object.assign({
-    id: id,
-    date: '2026-11-15',
-    customer: 'In-memory customer',
-    items: items,
-    coupon: coupon || ''
-  }, ledgerFigures || {});
+function comparableFigures(totals, fields) {
+  return fields.reduce(function (figures, field) {
+    figures[field] = totals[field];
+    return figures;
+  }, {});
 }
 
-test('CURRENT BEHAVIOUR: invoice ignores HSN slabs and prices items at the default 18% rate', function () {
-  var items = [
-    { id: 1, name: 'Rice', sku: 'RICE', hsn: '1006', price: 100, qty: 1 },
-    { id: 2, name: 'Ghee', sku: 'GHEE', hsn: '0405', price: 100, qty: 1 }
-  ];
+// These are in-memory copies of the ticket orders. Tests never load or write db.json.
+var orders = [
+  {
+    id: 1001,
+    items: [
+      { id: 8, name: 'Assam CTC Masala Chai 250g', sku: 'BEV-001', hsn: '0902', price: 140, qty: 2 },
+      { id: 2, name: 'Unpolished Toor Dal 1kg', sku: 'GRN-002', hsn: '0713', price: 165, qty: 2 }
+    ],
+    coupon: '', subtotal: 610, discount: 0, tax: 66.9, total: 676.9
+  },
+  {
+    id: 1002,
+    items: [
+      { id: 1, name: 'Indrayani Basmati Rice 5kg', sku: 'GRN-001', hsn: '1006', price: 640, qty: 1 },
+      { id: 4, name: 'Cold-Pressed Sunflower Oil 1L', sku: 'OIL-001', hsn: '1512', price: 190, qty: 2 }
+    ],
+    coupon: 'SAVE10', subtotal: 1020, discount: 102, tax: 45.9, total: 963.9
+  },
+  {
+    id: 1004,
+    items: [
+      { id: 5, name: 'Cold-Pressed Groundnut Oil 5L', sku: 'OIL-002', hsn: '1508', price: 1120, qty: 2 }
+    ],
+    coupon: 'SAVE10', subtotal: 2240, discount: 150, tax: 104.5, total: 2194.5
+  },
+  {
+    id: 1007,
+    items: [
+      { id: 6, name: 'A2 Gir Cow Ghee 500ml', sku: 'DRY-001', hsn: '0405', price: 450, qty: 2 },
+      { id: 4, name: 'Cold-Pressed Sunflower Oil 1L', sku: 'OIL-001', hsn: '1512', price: 190, qty: 2 }
+    ],
+    coupon: '', subtotal: 1280, discount: 0, tax: 127, total: 1407
+  },
+  {
+    id: 1008,
+    items: [
+      { id: 8, name: 'Assam CTC Masala Chai 250g', sku: 'BEV-001', hsn: '0902', price: 140, qty: 1 },
+      { id: 12, name: 'Kokum Sherbet Concentrate 750ml', sku: 'BEV-003', hsn: '2106', price: 180, qty: 2 }
+    ],
+    coupon: '', subtotal: 500, discount: 0, tax: 90, total: 590
+  }
+];
 
-  var ledger = pricing.computeTotals(items, '');
-  var calc = invoice.computeInvoiceFigures(order(1001, items));
+var invoiceFields = ['subtotal', 'discount', 'tax', 'cgst', 'sgst', 'total'];
+var ledgerFields = ['subtotal', 'discount', 'tax', 'total'];
 
-  assert.equal(ledger.tax, 17);
-  assert.equal(ledger.total, 217);
-  assert.equal(calc.tax, 36);
-  assert.equal(calc.total, 236);
-  assert.deepEqual(calc.rows.map(function (row) { return row.gstPercent; }), [18, 18]);
-});
-
-test('CURRENT BEHAVIOUR: invoice applies SAVE10 to subtotal plus GST without the coupon cap', function () {
-  var items = [{ id: 1, name: 'Bulk goods', hsn: '0902', price: 2240, qty: 1 }];
-  var ledger = pricing.computeTotals(items, 'SAVE10');
-  var calc = invoice.computeInvoiceFigures(order(1004, items, 'SAVE10'));
-
-  assert.equal(ledger.discount, 150);
-  assert.equal(ledger.tax, 376.2);
-  assert.equal(ledger.total, 2466.2);
-  assert.equal(calc.discount, 264.32);
-  assert.equal(calc.tax, 403.2);
-  assert.equal(calc.total, 2378.88);
-});
-
-test('CURRENT BEHAVIOUR: invoice applies a coupon even when its minimum-spend rules would reject it', function () {
-  var items = [{ id: 1, name: 'Small purchase', hsn: '0902', price: 100, qty: 1 }];
-  var ledger = pricing.computeTotals(items, 'SAVE10');
-  var calc = invoice.computeInvoiceFigures(order(1002, items, 'SAVE10'));
-
-  assert.equal(ledger.discount, 0);
-  assert.equal(calc.discount, 11.8);
-  assert.equal(calc.total, 106.2);
-});
-
-test('CURRENT BEHAVIOUR: all-18% items without a coupon produce matching invoice and ledger figures', function () {
-  var items = [{ id: 1, name: 'Tea', hsn: '0902', price: 500, qty: 2 }];
-  var ledger = pricing.computeTotals(items, '');
-  var calc = invoice.computeInvoiceFigures(order(1008, items));
-
-  assert.equal(ledger.tax, 180);
-  assert.equal(calc.tax, 180);
-  assert.equal(ledger.total, 1180);
-  assert.equal(calc.total, 1180);
-});
-
-test('CURRENT BEHAVIOUR: reconciliation reports the invoice calculation differences for in-memory orders', function () {
-  var items = [{ id: 1, name: 'Rice', hsn: '1006', price: 100, qty: 1 }];
-  var ledger = pricing.computeTotals(items, '');
-  var reconciliation = reports.getGstReconciliation({
-    orders: [order(1001, items, '', {
-      subtotal: ledger.subtotal,
-      discount: ledger.discount,
-      tax: ledger.tax,
-      total: ledger.total
-    })]
+test('invoice figures match checkout ledger figures for ticket orders', function (t) {
+  orders.forEach(function (order) {
+    t.test('order #' + order.id, function () {
+      var checkout = pricing.computeTotals(order.items, order.coupon);
+      var invoiceFigures = invoice.computeInvoiceFigures(order);
+      assert.deepEqual(comparableFigures(invoiceFigures, invoiceFields), comparableFigures(checkout, invoiceFields));
+      assert.deepEqual(comparableFigures(order, ledgerFields), comparableFigures(checkout, ledgerFields));
+    });
   });
+});
 
-  assert.equal(reconciliation.totalChecked, 1);
-  assert.equal(reconciliation.mismatchCount, 1);
-  assert.equal(reconciliation.rows[0].ledgerTax, 5);
-  assert.equal(reconciliation.rows[0].invoiceTax, 18);
-  assert.equal(reconciliation.rows[0].delta, 13);
+test('render omits the Accountant Reconciliation Notice when totals match', function () {
+  var html = invoice.render(orders[0]);
+  assert.equal(html.includes('Accountant Reconciliation Notice'), false);
+});
+
+test('render includes the Accountant Reconciliation Notice when the stored total differs', function () {
+  var order = Object.assign({}, orders[0], { total: orders[0].total + 1 });
+  var html = invoice.render(order);
+  assert.equal(html.includes('Accountant Reconciliation Notice'), true);
 });
