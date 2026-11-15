@@ -56,15 +56,15 @@ var orders = [
 var invoiceFields = ['subtotal', 'discount', 'tax', 'cgst', 'sgst', 'total'];
 var ledgerFields = ['subtotal', 'discount', 'tax', 'total'];
 
-test('invoice figures match checkout ledger figures for ticket orders', function (t) {
-  orders.forEach(function (order) {
-    t.test('order #' + order.id, function () {
+test('invoice figures match checkout ledger figures for ticket orders', async function (t) {
+  for (var order of orders) {
+    await t.test('order #' + order.id, function () {
       var checkout = pricing.computeTotals(order.items, order.coupon);
       var invoiceFigures = invoice.computeInvoiceFigures(order);
       assert.deepEqual(comparableFigures(invoiceFigures, invoiceFields), comparableFigures(checkout, invoiceFields));
       assert.deepEqual(comparableFigures(order, ledgerFields), comparableFigures(checkout, ledgerFields));
     });
-  });
+  }
 });
 
 test('render omits the Accountant Reconciliation Notice when totals match', function () {
